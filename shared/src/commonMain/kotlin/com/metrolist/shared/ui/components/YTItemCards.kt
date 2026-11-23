@@ -276,7 +276,7 @@ fun SongListItem(
             modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)
-                .alpha(if (enabled) 1f else 0.38f)
+                .alpha(if (enabled && !song.isUnavailable) 1f else 0.38f)
                 .clip(if (isCurrent) CircleShape else RoundedCornerShape(8.dp))
                 .background(colors.container)
                 .focusOutline(if (isCurrent) CircleShape else RoundedCornerShape(8.dp))

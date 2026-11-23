@@ -57,6 +57,7 @@ import com.metrolist.shared.generated.resources.song_count_with_hidden
 import com.metrolist.shared.model.PlaylistItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.canEdit
+import com.metrolist.shared.model.isSpotifyUnmatchedTrack
 import com.metrolist.shared.model.playlistLazyItemKeys
 import com.metrolist.shared.model.playlistOccurrenceIdentity
 import com.metrolist.shared.model.playlistSearchIndices
@@ -172,6 +173,7 @@ fun PlaylistContent(
     onMoreOptions: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
     onAddSong: (() -> Unit)? = null,
+    allowSpotifyPlaceholderClick: Boolean = false,
 ) {
     val currentSongIdState = rememberUpdatedState(currentSongId)
     val currentQueueItemIdState = rememberUpdatedState(currentQueueItemId)
@@ -512,6 +514,7 @@ fun PlaylistContent(
                                                     onReorderDragStarted = onReorderDragStarted,
                                                     onMove = moveAndCommit,
                                                     isSelected = isTrackSelected(song),
+                                                    allowSpotifyPlaceholderClick = allowSpotifyPlaceholderClick,
                                                 )
                                             }
 
@@ -704,6 +707,7 @@ fun PlaylistContent(
                                         onReorderDragStarted = onReorderDragStarted,
                                         onMove = moveAndCommit,
                                         isSelected = isTrackSelected(song),
+                                        allowSpotifyPlaceholderClick = allowSpotifyPlaceholderClick,
                                     )
                                 }
                             }
@@ -806,6 +810,7 @@ private fun LazyItemScope.PlaylistSongItem(
     onMoveDown: (() -> Unit)?,
     onMoveToTop: (() -> Unit)? = null,
     onMoveToBottom: (() -> Unit)? = null,
+    allowSpotifyPlaceholderClick: Boolean = false,
 ) {
     val playback by
         rememberItemPlayback(
@@ -833,6 +838,7 @@ private fun LazyItemScope.PlaylistSongItem(
                 trailingContent = trailingContent,
                 showThumbnail = true,
                 clickableMetadata = isDesktop,
+                enabled = !song.isUnavailable || (allowSpotifyPlaceholderClick && song.isSpotifyUnmatchedTrack),
             )
         }
     } else {
@@ -874,6 +880,7 @@ private fun LazyItemScope.PlaylistSongItem(
                     showThumbnail = true,
                     clickableMetadata = isDesktop,
                     longClickEnabled = isTv,
+                    enabled = !song.isUnavailable || (allowSpotifyPlaceholderClick && song.isSpotifyUnmatchedTrack),
                     leadingContent = {
                         ReorderMenu(
                             onMoveUp = onMoveUp,
@@ -914,6 +921,7 @@ private fun LazyItemScope.PlaylistSongItemRow(
     onReorderDragStarted: () -> Unit,
     onMove: (Int, Int) -> Unit,
     isSelected: Boolean,
+    allowSpotifyPlaceholderClick: Boolean = false,
 ) {
     val playback by
         rememberItemPlayback(
@@ -958,6 +966,7 @@ private fun LazyItemScope.PlaylistSongItemRow(
         onMoveDown = if (index < count - 1) ({ onMove(index, index + 1) }) else null,
         onMoveToTop = if (index > 0) ({ onMove(index, 0) }) else null,
         onMoveToBottom = if (index < count - 1) ({ onMove(index, count - 1) }) else null,
+        allowSpotifyPlaceholderClick = allowSpotifyPlaceholderClick,
     )
 }
 

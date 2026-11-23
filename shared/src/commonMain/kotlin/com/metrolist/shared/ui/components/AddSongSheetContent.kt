@@ -66,11 +66,14 @@ fun AddSongSheetContent(
     existingSongIds: Set<String>,
     onDismiss: () -> Unit,
     onAddSong: (SongItem, Boolean) -> Unit,
+    initialQuery: String = "",
+    title: String? = null,
+    recordSearchHistory: Boolean = true,
     songContent: @Composable (SongItem, () -> Unit) -> Unit = { song, onClick ->
         SongListItem(song = song, onClick = onClick, onShowMenu = onClick, showThumbnail = true)
     },
 ) {
-    var query by remember { mutableStateOf("") }
+    var query by remember(initialQuery) { mutableStateOf(initialQuery) }
     var isSearching by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<SongItem>>(emptyList()) }
     val scope = rememberCoroutineScope()
@@ -91,7 +94,7 @@ fun AddSongSheetContent(
                             .searchFiltered(
                                 submittedQuery,
                                 SearchFilter.SONG,
-                                recordSearchHistory = !Settings.shared.pauseSearchHistory,
+                                recordSearchHistory = recordSearchHistory && !Settings.shared.pauseSearchHistory,
                             ).items
                             .filterIsInstance<SongItem>()
                 } catch (e: CancellationException) {
@@ -104,6 +107,10 @@ fun AddSongSheetContent(
             }
     }
 
+    LaunchedEffect(initialQuery) {
+        if (initialQuery.isNotBlank()) search(initialQuery)
+    }
+
     Column(
         modifier =
             Modifier
@@ -113,7 +120,7 @@ fun AddSongSheetContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = stringResource(Res.string.add_a_song),
+            text = title ?: stringResource(Res.string.add_a_song),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )

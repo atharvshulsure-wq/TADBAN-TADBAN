@@ -41,6 +41,7 @@ data class ImportedPlaylistData(
     val sourcePlaylistCount: Int = 1,
     val sourceYouTubePlaylistId: String? = null,
     val coverUrl: String? = null,
+    val spotifyTracks: List<SpotifyPlaylistTrack>? = null,
 )
 
 sealed interface ImportProgressState {

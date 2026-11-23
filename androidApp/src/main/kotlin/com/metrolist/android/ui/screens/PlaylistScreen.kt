@@ -85,6 +85,7 @@ import com.metrolist.android.ui.menu.SongMenu
 import com.metrolist.android.utils.readPlaylistCover
 import com.metrolist.android.viewmodels.PlaylistViewModel
 import com.metrolist.shared.api.PlaylistRemovalFailedException
+import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.isHistoryPlaylistId
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.action_cannot_be_undone
@@ -117,6 +118,7 @@ import com.metrolist.shared.generated.resources.remove_from_playlist
 import com.metrolist.shared.generated.resources.retry
 import com.metrolist.shared.generated.resources.save
 import com.metrolist.shared.generated.resources.share_playlist
+import com.metrolist.shared.generated.resources.spotify_link_import_replace_title
 import com.metrolist.shared.generated.resources.suggestions
 import com.metrolist.shared.model.PlaylistPresentationOptions
 import com.metrolist.shared.model.PlaylistSongSort
@@ -125,15 +127,18 @@ import com.metrolist.shared.model.canEdit
 import com.metrolist.shared.model.filterForPlaylistSearch
 import com.metrolist.shared.model.indexOfPlaylistOccurrence
 import com.metrolist.shared.model.isReordering
+import com.metrolist.shared.model.isSpotifyUnmatchedTrack
 import com.metrolist.shared.model.playlistOccurrenceIdentity
 import com.metrolist.shared.model.playlistOccurrenceKey
 import com.metrolist.shared.model.preparePlaylistPresentation
 import com.metrolist.shared.model.previewThumbnailUrl
 import com.metrolist.shared.model.sortedForPlaylist
 import com.metrolist.shared.playlist.PlaylistPartiallyUpdatedException
+import com.metrolist.shared.playlistimport.PlaylistImportManager
 import com.metrolist.shared.settings.HiddenLibraryItems
 import com.metrolist.shared.settings.SavedPlaylistSongSorting
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.state.GlobalYouTubeRepository
 import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.state.SongMetadataState
 import com.metrolist.shared.ui.components.AddSongSheetContent
@@ -213,6 +218,7 @@ fun PlaylistScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val database: MusicDatabase = koinInject()
     val downloadManager: SongDownloadManager = koinInject()
     val imageLoader: ImageLoader = koinInject()
     val requireDownloadNotifications = rememberDownloadPermissionGate()
@@ -226,6 +232,7 @@ fun PlaylistScreen(
     var exportSongs by remember { mutableStateOf<List<SongItem>?>(null) }
     var selectedSongForMenu by remember { mutableStateOf<SongItem?>(null) }
     var showAddSongSheet by remember { mutableStateOf(false) }
+    var placeholderForReplacement by remember { mutableStateOf<SongItem?>(null) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var draftName by remember(playlistId) { mutableStateOf<String?>(null) }
@@ -684,6 +691,7 @@ fun PlaylistScreen(
                             null
                         },
                     songs = displayedSongs,
+                    allowSpotifyPlaceholderClick = true,
                     preparedSongKeys = presentation.keys,
                     text = playlistContentText(),
                     onPlayAll = {
@@ -704,6 +712,9 @@ fun PlaylistScreen(
                             playerConnection?.playQueue(suggestions, suggestionIndex, suggestionsTitle)
                         } else if (selection.active) {
                             selection.toggle(occurrenceKey(displayedSongs[index]))
+                        } else if (displayedSongs[index].isSpotifyUnmatchedTrack) {
+                            placeholderForReplacement = displayedSongs[index]
+                            showAddSongSheet = true
                         } else if (searchQuery.isNotBlank()) {
                             val song = displayedSongs[index]
                             val options = presentationOptions.copy(query = "")
@@ -1153,10 +1164,41 @@ fun PlaylistScreen(
 
         PopupVisibility(visible = showAddSongSheet) {
             AddSongSheet(
-                existingSongIds = songs.mapTo(mutableSetOf()) { it.id },
-                onDismiss = { showAddSongSheet = false },
+                existingSongIds =
+                    if (placeholderForReplacement != null) {
+                        emptySet()
+                    } else {
+                        songs.mapTo(mutableSetOf()) { it.id }
+                    },
+                initialQuery =
+                    placeholderForReplacement
+                        ?.let { placeholder ->
+                            listOf(placeholder.canonicalTitle ?: placeholder.title, placeholder.artists.joinToString { it.name })
+                                .filter(String::isNotBlank)
+                                .joinToString(" - ")
+                        }.orEmpty(),
+                title = placeholderForReplacement?.let { stringResource(Res.string.spotify_link_import_replace_title) },
+                recordSearchHistory = placeholderForReplacement == null,
+                onDismiss = {
+                    showAddSongSheet = false
+                    placeholderForReplacement = null
+                },
                 onAddSong = { song, allowDuplicate ->
-                    viewModel.addSong(song, allowDuplicate)
+                    val placeholder = placeholderForReplacement
+                    if (placeholder == null) {
+                        viewModel.addSong(song, allowDuplicate)
+                    } else {
+                        coroutineScope.launch {
+                            try {
+                                PlaylistImportManager(database, GlobalYouTubeRepository.instance)
+                                    .replaceSpotifyPlaceholder(playlistId, placeholder, song)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                snackbarHostState.showSnackbar(errorOccurredText)
+                            }
+                        }
+                    }
                 },
             )
         }
@@ -1185,11 +1227,22 @@ private fun AddSongSheet(
     existingSongIds: Set<String>,
     onDismiss: () -> Unit,
     onAddSong: (SongItem, Boolean) -> Unit,
+    initialQuery: String = "",
+    title: String? = null,
+    recordSearchHistory: Boolean = true,
 ) {
     AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
-        AddSongSheetContent(existingSongIds, onDismiss, onAddSong, songContent = { song, onClick ->
-            AddSongResultRow(song, onClick)
-        })
+        AddSongSheetContent(
+            existingSongIds = existingSongIds,
+            onDismiss = onDismiss,
+            onAddSong = onAddSong,
+            initialQuery = initialQuery,
+            title = title,
+            recordSearchHistory = recordSearchHistory,
+            songContent = { song, onClick ->
+                AddSongResultRow(song, onClick)
+            },
+        )
     }
 }
 

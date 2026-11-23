@@ -58,6 +58,11 @@ data class SongItem(
     val downloadedAt: Long? = null,
 ) : YTItem()
 
+const val SPOTIFY_UNMATCHED_TRACK_ID_PREFIX = "metrolist:spotify-unmatched:"
+
+val SongItem.isSpotifyUnmatchedTrack: Boolean
+    get() = id.startsWith(SPOTIFY_UNMATCHED_TRACK_ID_PREFIX)
+
 val SongItem.artworkExplicitness: Boolean?
     get() = if (isExplicit) true else explicitness
 

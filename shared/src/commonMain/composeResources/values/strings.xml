@@ -4753,6 +4753,32 @@
     <string name="import_paste_spotify_link">Paste Spotify playlist link</string>
     <!-- Translators: Input hint for paste spotify in the playlist import. -->
     <string name="import_paste_spotify_hint" translatable="false">https://open.spotify.com/playlist/...</string>
+    <!-- Translators: Action to import a public Spotify playlist from the Library playlists menu. -->
+    <string name="spotify_link_import">Import Spotify Link</string>
+    <!-- Translators: Heading for the public Spotify playlist link importer dialog. -->
+    <string name="spotify_link_import_title">Import Spotify playlist</string>
+    <!-- Translators: Prompt for the public Spotify playlist URL input. -->
+    <string name="spotify_link_import_prompt">Paste a public Spotify playlist link</string>
+    <!-- Translators: Progress for importing a Spotify playlist. %1$d is the current track number and %2$d is the total. -->
+    <string name="spotify_link_import_progress">Importing %1$d / %2$d...</string>
+    <!-- Translators: Progress status while loading Spotify playlist information. -->
+    <string name="spotify_link_import_loading">Loading Spotify playlist...</string>
+    <!-- Translators: Status appended to a Spotify playlist placeholder track title. -->
+    <string name="spotify_link_import_unmatched">Unmatched</string>
+    <!-- Translators: Track name when Spotify does not provide a title. -->
+    <string name="spotify_link_import_unknown_track">Unknown track</string>
+    <!-- Translators: Heading shown when a Spotify track cannot be confidently matched. %1$s is the source track and artist. -->
+    <string name="spotify_link_import_match_prompt">Couldn't auto-match: %1$s</string>
+    <!-- Translators: Action to keep an unmatched Spotify track as an ordered placeholder. -->
+    <string name="spotify_link_import_leave_placeholder">Continue Anyway (Leave Placeholder)</string>
+    <!-- Translators: Completion count. %1$d is the matched/imported song count and %2$d is the Spotify playlist track count. -->
+    <string name="spotify_link_import_summary">%1$d out of %2$d songs imported</string>
+    <!-- Translators: Error shown when importing a Spotify playlist fails. -->
+    <string name="spotify_link_import_error">Spotify playlist import failed. Check the link and try again.</string>
+    <!-- Translators: Heading for search results used to replace an unmatched Spotify track. -->
+    <string name="spotify_link_import_search_results">YouTube Music search results</string>
+    <!-- Translators: Heading for the search sheet used to replace a Spotify import placeholder. -->
+    <string name="spotify_link_import_replace_title">Replace unmatched track</string>
     <!-- Translators: Imperative action label for connect apple music account in the playlist import. -->
     <string name="import_connect_apple_music_account">Sign in with Apple Music account</string>
     <!-- Translators: Imperative action label for apple music account playlists in the playlist import. -->

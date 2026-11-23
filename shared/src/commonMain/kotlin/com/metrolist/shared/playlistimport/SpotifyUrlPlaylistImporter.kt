@@ -37,6 +37,15 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
 
+data class SpotifyPlaylistTrack(
+    val index: Int,
+    val title: String,
+    val artists: List<String>,
+    val durationSeconds: Long?,
+) {
+    val artistLabel: String get() = artists.joinToString(", ")
+}
+
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 object SpotifyUrlPlaylistImporter {
     private const val UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -79,6 +88,10 @@ object SpotifyUrlPlaylistImporter {
         return lower.contains("spotify.com") || lower.startsWith("spotify:playlist:") || lower.startsWith("spotify:album:") ||
             lower.matches(Regex("[a-zA-Z0-9]{22}"))
     }
+
+    fun isPublicPlaylistUrl(input: String): Boolean =
+        input.trim().startsWith("https://open.spotify.com/", ignoreCase = true) &&
+            parseUrl(input)?.first == "playlist"
 
     suspend fun loadPlaylist(
         urlOrUri: String,
@@ -239,15 +252,16 @@ object SpotifyUrlPlaylistImporter {
 
         val trackList = entity["trackList"]?.jsonArray ?: JsonArray(emptyList())
         val tracks = mutableListOf<PlaylistImportManager.CsvTrack>()
+        val spotifyTracks = mutableListOf<SpotifyPlaylistTrack>()
 
-        for (item in trackList) {
+        for ((index, item) in trackList.withIndex()) {
             val trackObj = item.jsonObject
             val trackTitle =
                 trackObj["title"]
                     ?.jsonPrimitive
                     ?.contentOrNull
                     ?.trim()
-                    ?.takeIf(String::isNotBlank) ?: continue
+                    .orEmpty()
             val rawArtist =
                 trackObj["subtitle"]
                     ?.jsonPrimitive
@@ -255,10 +269,19 @@ object SpotifyUrlPlaylistImporter {
                     ?.trim()
                     .orEmpty()
             val artistName = rawArtist.replace('\u00A0', ' ')
-            tracks += PlaylistImportManager.CsvTrack(trackTitle, artistName, null)
+            val durationSeconds = durationSeconds(trackObj)
+            spotifyTracks +=
+                SpotifyPlaylistTrack(
+                    index = index,
+                    title = trackTitle,
+                    artists = artistName.split(',').map(String::trim).filter(String::isNotBlank),
+                    durationSeconds = durationSeconds,
+                )
+            if (trackTitle.isBlank()) continue
+            tracks += PlaylistImportManager.CsvTrack(trackTitle, artistName, null, durationSeconds = durationSeconds)
         }
 
-        if (type == "playlist" && trackList.size >= 100) {
+        if (type == "playlist" && trackList.size >= PAGE_SIZE) {
             val accessToken =
                 root["props"]
                     ?.jsonObject
@@ -275,7 +298,7 @@ object SpotifyUrlPlaylistImporter {
                     ?.contentOrNull
 
             if (accessToken.isNullOrBlank()) throw ImportException(ImportErrorKey.IncompleteSource)
-            paginatePlaylistTracks(id, accessToken, trackList.size, tracks, onProgress)
+            paginatePlaylistTracks(id, accessToken, trackList.size, tracks, spotifyTracks, onProgress)
         }
 
         onProgress(tracks.size, tracks.size)
@@ -290,6 +313,7 @@ object SpotifyUrlPlaylistImporter {
                 tracks = tracks,
                 source = "Spotify",
                 coverUrl = coverUrl,
+                spotifyTracks = spotifyTracks,
             ),
         )
     }
@@ -299,6 +323,7 @@ object SpotifyUrlPlaylistImporter {
         accessToken: String,
         initialOffset: Int,
         tracks: MutableList<PlaylistImportManager.CsvTrack>,
+        spotifyTracks: MutableList<SpotifyPlaylistTrack>,
         onProgress: (loaded: Int, total: Int?) -> Unit,
     ) {
         val clientToken = getClientToken() ?: throw ImportException(ImportErrorKey.IncompleteSource)
@@ -400,7 +425,7 @@ object SpotifyUrlPlaylistImporter {
             if (offset >= totalCount) return
             if (items.isEmpty()) throw ImportException(ImportErrorKey.IncompleteSource)
 
-            for (item in items) {
+            for ((itemIndex, item) in items.withIndex()) {
                 val entry = item as? JsonObject ?: continue
                 val wrapper = (entry["itemV2"] as? JsonObject) ?: (entry["track"] as? JsonObject) ?: entry
                 val track = wrapper["data"] as? JsonObject ?: wrapper
@@ -409,7 +434,6 @@ object SpotifyUrlPlaylistImporter {
                     (track["uri"] as? JsonPrimitive)?.contentOrNull
                         ?: (wrapper["_uri"] as? JsonPrimitive)?.contentOrNull
                         ?: (wrapper["uri"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-                if (uri.startsWith("spotify:local:") || trackTitle.isBlank()) continue
                 val artistName =
                     ((track["artists"] as? JsonObject)?.get("items") as? JsonArray)
                         .orEmpty()
@@ -418,7 +442,16 @@ object SpotifyUrlPlaylistImporter {
                             (profile?.get("name") as? JsonPrimitive)?.contentOrNull
                         }.joinToString(", ")
                         .replace('\u00A0', ' ')
-                tracks += PlaylistImportManager.CsvTrack(trackTitle, artistName, null)
+                val durationSeconds = durationSeconds(track)
+                spotifyTracks +=
+                    SpotifyPlaylistTrack(
+                        index = offset + itemIndex,
+                        title = trackTitle,
+                        artists = artistName.split(',').map(String::trim).filter(String::isNotBlank),
+                        durationSeconds = durationSeconds,
+                    )
+                if (uri.startsWith("spotify:local:") || trackTitle.isBlank()) continue
+                tracks += PlaylistImportManager.CsvTrack(trackTitle, artistName, null, durationSeconds = durationSeconds)
                 if (tracks.size >= PlaylistImportManager.MAX_PLAYLIST_TRACKS) break
             }
 
@@ -428,5 +461,21 @@ object SpotifyUrlPlaylistImporter {
             if (offset >= totalCount) return
         }
         throw ImportException(ImportErrorKey.IncompleteSource)
+    }
+
+    private fun durationSeconds(track: JsonObject): Long? {
+        val durationValue =
+            track["duration_ms"]
+                ?: track["durationMs"]
+                ?: track["duration"]?.let { value ->
+                    if (value is JsonObject) {
+                        value["totalMilliseconds"] ?: value["milliseconds"]
+                    } else {
+                        value
+                    }
+                }
+                ?: return null
+        val durationMillis = durationValue.jsonPrimitive.contentOrNull?.toLongOrNull() ?: return null
+        return durationMillis.takeIf { it > 0 }?.div(1000)
     }
 }

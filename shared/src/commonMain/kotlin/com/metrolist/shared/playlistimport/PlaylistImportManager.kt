@@ -17,9 +17,12 @@ import com.metrolist.shared.generated.resources.favorites
 import com.metrolist.shared.generated.resources.imported_playlist
 import com.metrolist.shared.model.ArtistTiny
 import com.metrolist.shared.model.PlaylistItem
+import com.metrolist.shared.model.SPOTIFY_UNMATCHED_TRACK_ID_PREFIX
 import com.metrolist.shared.model.SearchFilter
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.artworkExplicitness
+import com.metrolist.shared.model.isSpotifyUnmatchedTrack
+import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.model.isVideoType
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.SongLikeState
@@ -38,6 +41,8 @@ import org.jetbrains.compose.resources.getString
 import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 private fun uriScheme(value: String): String? = Regex("^([A-Za-z][A-Za-z0-9+.-]*):").find(value)?.groupValues?.get(1)
 
@@ -143,6 +148,34 @@ class PlaylistImportManager(
             )
         }
         return result
+    }
+
+    suspend fun replaceSpotifyPlaceholder(
+        playlistId: String,
+        placeholder: SongItem,
+        replacement: SongItem,
+    ) {
+        require(placeholder.isSpotifyUnmatchedTrack) { "Song is not an unmatched Spotify import placeholder" }
+        val mappingId = requireNotNull(placeholder.playlistLocalMappingId) { "Playlist mapping is missing" }
+        require(!replacement.isSpotifyUnmatchedTrack) { "A placeholder cannot replace another placeholder" }
+        database.useWriterConnection { connection ->
+            connection.immediateTransaction {
+                val playlist = database.dao().findPlaylistEntity(playlistId)
+                require(playlist?.isLocal == true && playlist.browseId == null) { "Spotify placeholders require a local playlist" }
+                persistSongMetadata(replacement)
+                val changed =
+                    database
+                        .dao()
+                        .replacePlaylistSong(
+                            playlistId = playlistId,
+                            mappingId = mappingId,
+                            placeholderId = placeholder.id,
+                            songId = replacement.id,
+                        )
+                check(changed == 1) { "Unmatched Spotify playlist entry is no longer available" }
+                database.dao().updatePlaylistLastUpdated(playlistId)
+            }
+        }
     }
 
     private fun CsvTrack.matchKey(): String {
@@ -513,20 +546,8 @@ class PlaylistImportManager(
         occurrence: Int,
     ): Boolean {
         val dao = database.dao()
-        val existing = persistImportedTitle(song)
         if (dao.checkInPlaylist(playlist.id, song.id) >= occurrence) return false
-        if (existing == null) {
-            dao.upsert(song.toEntity())
-            song.artists.forEachIndexed { artistIndex, artist ->
-                val artistId = artist.id ?: ArtistEntity.generateArtistId()
-                if (dao.getArtistById(artistId) == null) {
-                    dao.upsert(
-                        ArtistEntity(id = artistId, name = artist.name, thumbnailUrl = artist.thumbnail, isLocal = artist.id == null),
-                    )
-                }
-                dao.upsert(SongArtistMap(song.id, artistId, artistIndex))
-            }
-        }
+        persistSongMetadata(song)
         dao.insert(
             PlaylistSongMap(
                 playlistId = playlist.id,
@@ -537,6 +558,21 @@ class PlaylistImportManager(
         )
         dao.updatePlaylistLastUpdated(playlist.id)
         return true
+    }
+
+    private suspend fun persistSongMetadata(song: SongItem) {
+        val dao = database.dao()
+        if (persistImportedTitle(song) != null) return
+        dao.upsert(song.toEntity().copy(isUnavailable = song.isUnavailable))
+        song.artists.forEachIndexed { artistIndex, artist ->
+            val artistId = artist.id ?: ArtistEntity.generateArtistId()
+            if (dao.getArtistById(artistId) == null) {
+                dao.upsert(
+                    ArtistEntity(id = artistId, name = artist.name, thumbnailUrl = artist.thumbnail, isLocal = artist.id == null),
+                )
+            }
+            dao.upsert(SongArtistMap(song.id, artistId, artistIndex))
+        }
     }
 
     private suspend fun persistImportedTitle(song: SongItem): SongEntity? {
@@ -705,10 +741,46 @@ class PlaylistImportManager(
                         )
                 }.sortedWith(
                     compareByDescending<SongItem> { album.isNotEmpty() && normalized(it.album?.name.orEmpty()) == album }
+                        .thenBy(SongItem::isVideoSong)
+                        .thenBy(SongItem::isUploaded)
                         .thenBy { song ->
                             track.durationSeconds?.let { duration -> song.duration?.let { abs(duration - it) } } ?: Long.MAX_VALUE
                         },
                 ).firstOrNull()
+        }
+
+        fun bestSpotifyTrackMatch(
+            track: SpotifyPlaylistTrack,
+            candidates: List<SongItem>,
+        ): SongItem? =
+            bestTrackMatch(
+                CsvTrack(
+                    title = track.title,
+                    artist = track.artistLabel,
+                    videoId = null,
+                    durationSeconds = track.durationSeconds,
+                ),
+                candidates,
+            )
+
+        @OptIn(ExperimentalUuidApi::class)
+        fun spotifyPlaceholder(
+            track: SpotifyPlaylistTrack,
+            unmatchedLabel: String,
+        ): SongItem {
+            val sourceTitle = track.title.ifBlank { unmatchedLabel }
+            val displayTitle = "#${track.index + 1} - $sourceTitle ($unmatchedLabel)"
+            return SongItem(
+                id = SPOTIFY_UNMATCHED_TRACK_ID_PREFIX + Uuid.random().toString(),
+                title = displayTitle,
+                thumbnail = null,
+                artists = track.artists.map { ArtistTiny(id = null, name = it) },
+                album = null,
+                duration = track.durationSeconds,
+                customTitle = displayTitle,
+                canonicalTitle = sourceTitle,
+                isUnavailable = true,
+            )
         }
 
         internal fun resolutionSearchQuery(track: CsvTrack): String? {

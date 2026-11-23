@@ -232,6 +232,47 @@ class SpotifyUrlPlaylistImporterTest {
         }
 
     @Test
+    fun publicEmbedPreservesSpotifyTrackIndicesArtistsAndDurationsWithoutAuthentication() =
+        runBlocking {
+            val html =
+                createEmbedHtml(trackCount = 3, hasAccessToken = false)
+                    .replace(
+                        """{"title": "Track 1", "subtitle": "Artist 1"}""",
+                        """{"title": "Track 1", "subtitle": "Artist A, Artist B", "duration_ms": 181234}""",
+                    )
+            var nonEmbedRequests = 0
+            val client =
+                HttpClient(
+                    MockEngine { request ->
+                        if (request.url.toString().contains("/embed/playlist/")) {
+                            respondHtml(html)
+                        } else {
+                            nonEmbedRequests++
+                            error("Unexpected Spotify request: ${request.url}")
+                        }
+                    },
+                )
+            try {
+                SpotifyUrlPlaylistImporter.resetClientForTests(client)
+
+                val data =
+                    SpotifyUrlPlaylistImporter
+                        .loadPlaylist("https://open.spotify.com/playlist/test123456789012345678")
+                        .getOrThrow()
+                val tracks = requireNotNull(data.spotifyTracks)
+
+                assertEquals(listOf(0, 1, 2), tracks.map { it.index })
+                assertEquals(listOf("Artist A", "Artist B"), tracks[0].artists)
+                assertEquals(181L, tracks[0].durationSeconds)
+                assertEquals("Track 3", tracks[2].title)
+                assertEquals(0, nonEmbedRequests)
+            } finally {
+                client.close()
+                SpotifyUrlPlaylistImporter.resetClientForTests()
+            }
+        }
+
+    @Test
     fun missingPlaylistTitleUsesCallerFallback() =
         runBlocking {
             val html = createEmbedHtml(trackCount = 1, hasAccessToken = false).replace("\"name\": \"Test Playlist\",", "")
@@ -468,6 +509,9 @@ class SpotifyUrlPlaylistImporterTest {
             assertEquals("Track 101", playlist.tracks[100].title)
             assertEquals("Artist 101", playlist.tracks[100].artist)
             assertEquals("Track 130", playlist.tracks[129].title)
+            assertEquals(130, playlist.spotifyTracks?.size)
+            assertEquals((0 until 130).toList(), playlist.spotifyTracks?.map { it.index })
+            assertEquals("Track 101", playlist.spotifyTracks?.get(100)?.title)
             assertEquals(1, pathfinderCalls)
             assertEquals(130, reportedLoaded)
             assertEquals(130, reportedTotal)

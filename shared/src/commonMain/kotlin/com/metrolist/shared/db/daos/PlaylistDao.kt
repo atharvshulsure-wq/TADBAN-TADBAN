@@ -137,6 +137,17 @@ interface PlaylistDao {
         songId: String,
     ): Int
 
+    @Query(
+        "UPDATE playlist_song_map SET songId = :songId " +
+            "WHERE playlistId = :playlistId AND id = :mappingId AND songId = :placeholderId",
+    )
+    suspend fun replacePlaylistSong(
+        playlistId: String,
+        mappingId: Int,
+        placeholderId: String,
+        songId: String,
+    ): Int
+
     @Query("UPDATE playlist SET lastUpdateTime = :now WHERE id = :playlistId")
     suspend fun updatePlaylistLastUpdated(
         playlistId: String,
